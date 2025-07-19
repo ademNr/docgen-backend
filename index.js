@@ -1,19 +1,20 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const cors = require('cors');
+app.use(cors());
 async function getOctokit() {
     const { Octokit } = await import('@octokit/rest');
     return Octokit;
 }
-const cors = require('cors');
+
+
 const rateLimit = require('express-rate-limit');
 const app = express();
 
 // Middleware
 // cors : origin: process.env.CLIENT_URL || 'http://localhost:3000'
-app.use(cors({
-    origin: "*",
-}));
+
 
 
 app.use(express.json());
@@ -184,75 +185,6 @@ app.post('/api/auth/github', async (req, res) => {
     }
 });
 
-// Process repository and generate documentation
-app.post('/api/generate-docs', async (req, res) => {
-    console.log('Received generate-docs request');
-    const { token, owner, repo, includeTests = false } = req.body;
-    console.log(`Request for repo: ${owner}/${repo}`);
-    console.log(`Include tests: ${includeTests}`);
-    // Validate input
-    if (!token || !owner || !repo) {
-        return res.status(400).json({ error: 'Missing required parameters' });
-    }
-
-    try {
-        const Octokit = await getOctokit();
-        const octokit = new Octokit({
-            auth: token,
-            request: { timeout: 30000 }
-        });
-
-        // 1. Get repository metadata
-        const repoData = await octokit.repos.get({ owner, repo });
-        const defaultBranch = repoData.data.default_branch;
-
-        // 2. Get repository contents
-        const { data: contents } = await octokit.repos.getContent({
-            owner,
-            repo,
-            ref: defaultBranch,
-            path: ''
-        });
-
-        // 3. Filter and process files
-        const codeFiles = await processRepositoryContents(
-            octokit,
-            owner,
-            repo,
-            contents,
-            includeTests
-        );
-
-        // 4. Generate documentation via AI
-        const documentation = await generateAIDocumentation(
-            codeFiles,
-            repoData.data
-        );
-        console.log('Sending documentation response');
-        res.json({
-            documentation
-
-        });
-    } catch (error) {
-        console.error('Documentation generation error:', error);
-
-        let status = 500;
-        let message = 'Documentation generation failed';
-
-        if (error.status === 404) {
-            status = 404;
-            message = 'Repository not found';
-        } else if (error.status === 403) {
-            status = 403;
-            message = 'API rate limit exceeded';
-        } else if (error.status === 401) {
-            status = 401;
-            message = 'Invalid access token';
-        }
-
-        res.status(status).json({ error: message });
-    }
-});
 
 function getRelativePath(fullPath, basePath) {
     return basePath ? fullPath.replace(basePath + '/', '') : fullPath;

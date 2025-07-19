@@ -11,7 +11,19 @@ const app = express();
 
 // Middleware
 // cors : origin: process.env.CLIENT_URL || 'http://localhost:3000'
-app.use(cors({ origin: "http://localhost:3000" }));
+app.use(cors({
+    origin: "http://localhost:3000",
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// Add explicit OPTIONS handler before your routes
+app.options('*', (req, res) => {
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.status(200).send();
+});
 app.use(express.json());
 
 // Rate limiting for API protection

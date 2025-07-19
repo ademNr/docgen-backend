@@ -11,7 +11,7 @@ const app = express();
 
 // Middleware
 // cors : origin: process.env.CLIENT_URL || 'http://localhost:3000'
-app.use(cors());
+app.use(cors({ origin: "http://localhost:3000" }));
 app.use(express.json());
 
 // Rate limiting for API protection

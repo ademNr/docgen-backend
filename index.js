@@ -2,20 +2,31 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
-app.use(cors());
+
+const app = express();
+
+// Middleware - CORS configuration (FIXED)
+app.use(cors({
+    origin: [
+        'http://localhost:3000',
+        'http://localhost:3001',
+        'https://your-frontend-domain.vercel.app', // Replace with your actual frontend URL
+        // Add any other domains you need
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
+
+// Add preflight OPTIONS handler
+app.options('*', cors());
+
 async function getOctokit() {
     const { Octokit } = await import('@octokit/rest');
     return Octokit;
 }
 
-
 const rateLimit = require('express-rate-limit');
-const app = express();
-
-// Middleware
-// cors : origin: process.env.CLIENT_URL || 'http://localhost:3000'
-
-
 
 app.use(express.json());
 
@@ -68,7 +79,9 @@ app.get('/api/generate-progress', (req, res) => {
     res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': req.headers.origin || '*',
+        'Access-Control-Allow-Credentials': 'true'
     });
 
     const sendProgress = (data) => {
@@ -84,6 +97,7 @@ app.get('/api/generate-progress', (req, res) => {
         }
     });
 });
+
 // Update generate-docs endpoint with progress tracking
 app.post('/api/generate-docs', async (req, res) => {
     const { token, owner, repo, includeTests = false } = req.body;
@@ -140,7 +154,6 @@ app.post('/api/generate-docs', async (req, res) => {
         console.error('Documentation generation error:', error);
         emitProgress(jobId, -1, `Error: ${error.message}`);
 
-
         let status = 500;
         let message = 'Documentation generation failed';
 
@@ -158,6 +171,7 @@ app.post('/api/generate-docs', async (req, res) => {
         res.status(status).json({ error: message });
     }
 });
+
 app.post('/api/auth/github', async (req, res) => {
     try {
         const { code } = req.body;
@@ -184,7 +198,6 @@ app.post('/api/auth/github', async (req, res) => {
         res.status(500).json({ error: 'Authentication service unavailable' });
     }
 });
-
 
 function getRelativePath(fullPath, basePath) {
     return basePath ? fullPath.replace(basePath + '/', '') : fullPath;
@@ -272,7 +285,6 @@ function emitProgress(jobId, progress, message, currentFile = null) {
         currentFile
     });
 }
-
 
 // File type filtering
 function isCodeFile(filename, includeTests) {
@@ -403,7 +415,6 @@ IMPORTANT RULES:
 5. Escape all special characters in strings
         `;
 
-
         const response = await callGemini({
             prompt: prompt,
             model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
@@ -477,7 +488,6 @@ function repairIncompleteJson(rawResponse) {
 
     return jsonStr;
 }
-
 
 // Gemini API Caller
 async function callGemini({ prompt, model }) {
@@ -556,6 +566,7 @@ app.get('/api/user/repos', async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch repositories' });
     }
 });
+
 // Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`DocsGen backend running on port ${PORT}`));

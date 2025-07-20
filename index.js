@@ -3,6 +3,8 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 
+const EventEmitter = require('events');
+const crypto = require('crypto');
 const app = express();
 
 
@@ -31,9 +33,7 @@ const apiLimiter = rateLimit({
 });
 app.use('/api/', apiLimiter);
 
-// Progress tracking utilities
-const EventEmitter = require('events');
-const crypto = require('crypto');
+
 
 const progressChannels = {};
 
@@ -537,7 +537,9 @@ async function callGemini({ prompt, model }) {
         throw err;
     }
 }
-
+app.get('/api/test', (req, res) => {
+    res.json({ message: 'CORS test successful!' });
+});
 // Error handling middleware
 app.use((error, req, res, next) => {
     console.error('Unhandled error:', error);
@@ -553,5 +555,5 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`DocsGen backend running on port ${PORT}`);
-    console.log('CORS enabled for localhost:3000');
+
 });

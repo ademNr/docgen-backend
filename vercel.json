@@ -5,11 +5,31 @@
             "src": "index.js",
             "use": "@vercel/node",
             "config": {
-                "maxLambdaSize": "50mb"
+                "maxLambdaSize": "50mb",
+                "includeFiles": [
+                    "node_modules/@sparticuz/chromium/**"
+                ]
+            }
+        }
+    ],
+    "routes": [
+        {
+            "src": "/api/(.*)",
+            "dest": "index.js",
+            "methods": [
+                "GET",
+                "POST",
+                "OPTIONS"
+            ],
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Authorization, Content-Type"
             }
         }
     ],
     "env": {
-        "NODE_ENV": "production"
+        "NODE_ENV": "production",
+        "CHROMIUM_EXECUTABLE_PATH": "/var/task/node_modules/@sparticuz/chromium/bin/chromium"
     }
 }

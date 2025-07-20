@@ -16,14 +16,17 @@ const corsOptions = {
             'http://localhost:3001',
             'https://localhost:3000',
             'https://localhost:3001',
-            // Add your production frontend URL here when you deploy
-            // 'https://your-frontend-app.vercel.app'
+            // Add your production frontend URL when you deploy it
+            'https://your-frontend-app.vercel.app',
+            // Allow localhost to access deployed backend
+            ...(process.env.NODE_ENV === 'production' ? ['http://localhost:3000', 'http://localhost:3001'] : [])
         ];
 
-        if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+        if (allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
-            callback(new Error('Not allowed by CORS'));
+            console.log('CORS blocked origin:', origin); // Debug log
+            callback(new Error(`Not allowed by CORS. Origin: ${origin}`));
         }
     },
     credentials: true,
@@ -42,7 +45,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// Manual CORS headers for additional safety
+// Update your manual CORS headers too
 app.use((req, res, next) => {
     const origin = req.headers.origin;
     const allowedOrigins = [
@@ -50,6 +53,7 @@ app.use((req, res, next) => {
         'http://localhost:3001',
         'https://localhost:3000',
         'https://localhost:3001'
+        // Add production origins here too
     ];
 
     if (allowedOrigins.includes(origin)) {
@@ -59,9 +63,8 @@ app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
     res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control, Pragma');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
+    res.setHeader('Access-Control-Max-Age', '86400');
 
-    // Handle preflight requests
     if (req.method === 'OPTIONS') {
         res.status(200).end();
         return;

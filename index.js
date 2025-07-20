@@ -5,21 +5,74 @@ const cors = require('cors');
 
 const app = express();
 
-// Middleware - CORS configuration (FIXED)
-app.use(cors({
-    origin: [
+// CORS Middleware - Must be FIRST before any routes
+const corsOptions = {
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+
+        const allowedOrigins = [
+            'http://localhost:3000',
+            'http://localhost:3001',
+            'https://localhost:3000',
+            'https://localhost:3001',
+            // Add your production frontend URL here when you deploy
+            // 'https://your-frontend-app.vercel.app'
+        ];
+
+        if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true,
+    optionsSuccessStatus: 200,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: [
+        'Origin',
+        'X-Requested-With',
+        'Content-Type',
+        'Accept',
+        'Authorization',
+        'Cache-Control',
+        'Pragma'
+    ]
+};
+
+app.use(cors(corsOptions));
+
+// Manual CORS headers for additional safety
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    const allowedOrigins = [
         'http://localhost:3000',
         'http://localhost:3001',
-        'https://your-frontend-domain.vercel.app', // Replace with your actual frontend URL
-        // Add any other domains you need
-    ],
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-}));
+        'https://localhost:3000',
+        'https://localhost:3001'
+    ];
 
-// Add preflight OPTIONS handler
-app.options('*', cors());
+    if (allowedOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control, Pragma');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
+
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+
+    next();
+});
+
+// Body parser middleware
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 async function getOctokit() {
     const { Octokit } = await import('@octokit/rest');
@@ -28,22 +81,20 @@ async function getOctokit() {
 
 const rateLimit = require('express-rate-limit');
 
-app.use(express.json());
-
 // Rate limiting for API protection
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 100,
-    message: 'Too many requests from this IP, please try again later'
+    message: 'Too many requests from this IP, please try again later',
+    standardHeaders: true,
+    legacyHeaders: false,
 });
 app.use('/api/', apiLimiter);
 
-// GitHub OAuth token exchange
-
+// Progress tracking utilities
 const EventEmitter = require('events');
 const crypto = require('crypto');
 
-// Add these progress tracking utilities
 const progressChannels = {};
 
 function createJobId(owner, repo, token) {
@@ -57,15 +108,25 @@ function getProgressEmitter(jobId) {
     return progressChannels[jobId];
 }
 
-function emitProgress(jobId, progress, message) {
+function emitProgress(jobId, progress, message, currentFile = null) {
     const emitter = getProgressEmitter(jobId);
-    emitter.emit('progress', { progress, message });
+    emitter.emit('progress', {
+        progress,
+        message,
+        currentFile
+    });
 }
 
 function removeProgressEmitter(jobId) {
     delete progressChannels[jobId];
 }
 
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Progress tracking endpoint
 app.get('/api/generate-progress', (req, res) => {
     const { owner, repo, token } = req.query;
 
@@ -76,6 +137,7 @@ app.get('/api/generate-progress', (req, res) => {
     const jobId = createJobId(owner, repo, token);
     const progressEmitter = getProgressEmitter(jobId);
 
+    // Set SSE headers
     res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -98,7 +160,51 @@ app.get('/api/generate-progress', (req, res) => {
     });
 });
 
-// Update generate-docs endpoint with progress tracking
+// GitHub OAuth endpoint - FIXED
+app.post('/api/auth/github', async (req, res) => {
+    try {
+        console.log('GitHub auth request received:', req.body);
+
+        const { code } = req.body;
+
+        if (!code) {
+            return res.status(400).json({ error: 'Authorization code is required' });
+        }
+
+        const response = await axios.post(
+            'https://github.com/login/oauth/access_token',
+            {
+                client_id: process.env.GITHUB_CLIENT_ID,
+                client_secret: process.env.GITHUB_CLIENT_SECRET,
+                code,
+            },
+            {
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                timeout: 10000 // 10s timeout
+            }
+        );
+
+        console.log('GitHub response:', response.data);
+
+        if (!response.data.access_token) {
+            console.error('No access token in response:', response.data);
+            return res.status(401).json({ error: 'GitHub authentication failed' });
+        }
+
+        res.json({ token: response.data.access_token });
+    } catch (error) {
+        console.error('GitHub auth error:', error.response?.data || error.message);
+        res.status(500).json({
+            error: 'Authentication service unavailable',
+            details: error.message
+        });
+    }
+});
+
+// Generate docs endpoint
 app.post('/api/generate-docs', async (req, res) => {
     const { token, owner, repo, includeTests = false } = req.body;
     const jobId = createJobId(owner, repo, token);
@@ -126,7 +232,7 @@ app.post('/api/generate-docs', async (req, res) => {
             path: ''
         });
 
-        // 3. Process files - pass jobId for progress tracking
+        // 3. Process files
         emitProgress(jobId, 30, 'Starting file analysis...');
         const codeFiles = await processRepositoryContents(
             octokit,
@@ -135,7 +241,7 @@ app.post('/api/generate-docs', async (req, res) => {
             contents,
             includeTests,
             '',
-            jobId  // Pass jobId to file processor
+            jobId
         );
 
         emitProgress(jobId, 50, `Processed ${codeFiles.length} files`);
@@ -172,38 +278,54 @@ app.post('/api/generate-docs', async (req, res) => {
     }
 });
 
-app.post('/api/auth/github', async (req, res) => {
+// User repositories endpoint
+app.get('/api/user/repos', async (req, res) => {
     try {
-        const { code } = req.body;
-        const response = await axios.post(
-            'https://github.com/login/oauth/access_token',
-            {
-                client_id: process.env.GITHUB_CLIENT_ID,
-                client_secret: process.env.GITHUB_CLIENT_SECRET,
-                code,
-            },
-            {
-                headers: { Accept: 'application/json' },
-                timeout: 10000 // 10s timeout
-            }
-        );
-
-        if (!response.data.access_token) {
-            return res.status(401).json({ error: 'GitHub authentication failed' });
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: 'Unauthorized - Bearer token required' });
         }
 
-        res.json({ token: response.data.access_token });
+        const token = authHeader.split(' ')[1];
+
+        const response = await axios.get('https://api.github.com/user/repos', {
+            headers: {
+                Authorization: `token ${token}`,
+                Accept: 'application/vnd.github.v3+json'
+            },
+            params: {
+                sort: 'updated',
+                direction: 'desc',
+                per_page: 100
+            }
+        });
+
+        const repos = response.data.map(repo => ({
+            id: repo.id,
+            name: repo.name,
+            owner: repo.owner.login,
+            full_name: repo.full_name,
+            description: repo.description,
+            language: repo.language,
+            stars: repo.stargazers_count,
+            forks: repo.forks_count,
+            updated_at: repo.updated_at,
+            html_url: repo.html_url,
+            default_branch: repo.default_branch
+        }));
+
+        res.json(repos);
     } catch (error) {
-        console.error('GitHub auth error:', error.response?.data || error.message);
-        res.status(500).json({ error: 'Authentication service unavailable' });
+        console.error('Error fetching repositories:', error.response?.data || error.message);
+        res.status(500).json({ error: 'Failed to fetch repositories' });
     }
 });
 
+// Helper functions (keeping the rest of your code)
 function getRelativePath(fullPath, basePath) {
     return basePath ? fullPath.replace(basePath + '/', '') : fullPath;
 }
 
-// Update the processRepositoryContents function
 async function processRepositoryContents(octokit, owner, repo, contents, includeTests, path = '', jobId = null) {
     const results = [];
     let processedCount = 0;
@@ -213,7 +335,6 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
             const relativePath = getRelativePath(item.path, path);
 
             if (item.type === 'dir') {
-                // Emit directory progress
                 if (jobId) {
                     emitProgress(jobId, null, `Scanning directory: ${relativePath}`);
                 }
@@ -234,7 +355,6 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
                 );
                 results.push(...nestedFiles);
             } else if (item.type === 'file' && isCodeFile(item.name, includeTests)) {
-                // Emit file processing start
                 if (jobId) {
                     emitProgress(jobId, null, `Analyzing file: ${relativePath}`);
                 }
@@ -260,7 +380,6 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
 
                 processedCount++;
 
-                // Update progress every 5 files
                 if (jobId && processedCount % 5 === 0) {
                     emitProgress(jobId, null, `Processed ${processedCount} files...`);
                 }
@@ -276,17 +395,6 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
     return results;
 }
 
-// Update the emitProgress function
-function emitProgress(jobId, progress, message, currentFile = null) {
-    const emitter = getProgressEmitter(jobId);
-    emitter.emit('progress', {
-        progress,
-        message,
-        currentFile
-    });
-}
-
-// File type filtering
 function isCodeFile(filename, includeTests) {
     const validExtensions = [
         '.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.kt', '.go',
@@ -300,12 +408,10 @@ function isCodeFile(filename, includeTests) {
 
     const extension = filename.substring(filename.lastIndexOf('.'));
 
-    // Skip non-code files
     if (!validExtensions.includes(extension.toLowerCase())) {
         return false;
     }
 
-    // Filter out test files if not included
     if (!includeTests) {
         for (const pattern of testPatterns) {
             if (filename.includes(pattern)) {
@@ -317,8 +423,6 @@ function isCodeFile(filename, includeTests) {
     return true;
 }
 
-// AI Documentation Generation using Google Gemini
-// Enhanced backend response
 async function generateAIDocumentation(files, repoMetadata) {
     try {
         const prompt = `
@@ -393,42 +497,21 @@ ${files.slice(0, 20).map(file => {
             return `\n\n### FILE: ${file.path}\n\`\`\`\n${truncatedContent}\n\`\`\``;
         }).join('\n')}
 
-IMPORTANT RULES FOR YOUR RESPONSE:
-1. Return ONLY a complete, valid JSON object
-2. Do NOT wrap the response in any Markdown code blocks (no \`\`\`json)
-3. Ensure the JSON is properly closed with all brackets and quotes
-4. If showing examples, make sure they don't get truncated
-5. Escape any special characters in strings
-6. The response must be parseable by JSON.parse()
-
-The response must:
-- Start with {
-- End with }
-- Be complete (no truncated examples or arrays)
-- Have all strings properly quoted
-
-IMPORTANT RULES:
-1. Return ONLY a complete, valid JSON object
-2. Ensure the JSON is properly closed with all brackets
-3. Keep API examples concise to avoid truncation
-4. If any array might be long, limit it to 5 items max
-5. Escape all special characters in strings
+IMPORTANT: Return ONLY a complete, valid JSON object. No markdown, no explanations.
         `;
 
         const response = await callGemini({
             prompt: prompt,
             model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
-            maxTokens: 4096  // Increase token limit if possible
+            maxTokens: 4096
         });
 
         if (!response) {
             throw new Error('Gemini API returned empty response');
         }
 
-        // Handle incomplete JSON by attempting to close it
         let jsonString = repairIncompleteJson(response);
 
-        // Parse the JSON response
         try {
             return JSON.parse(jsonString);
         } catch (parseError) {
@@ -443,32 +526,25 @@ IMPORTANT RULES:
 }
 
 function repairIncompleteJson(rawResponse) {
-    // Remove Markdown code blocks
     let jsonStr = rawResponse.trim()
         .replace(/^```(json)?/g, '')
         .replace(/```$/g, '')
         .trim();
 
-    // Check for truncation and repair
     if (!jsonStr.endsWith('}')) {
-        // Attempt to close JSON structure
         if (jsonStr.endsWith('"')) {
             jsonStr += '}';
         }
-        // Handle arrays
         else if (jsonStr.match(/\[\s*[^\]]*$/)) {
             jsonStr = jsonStr.replace(/(\s*)$/, ']}$1');
         }
-        // Handle objects
         else if (jsonStr.match(/\{\s*[^}]*$/)) {
             jsonStr = jsonStr.replace(/(\s*)$/, '}$1');
         }
-        // Handle mid-string
         else if ((jsonStr.match(/"/g) || []).length % 2 !== 0) {
             jsonStr += '"';
         }
 
-        // Add closing braces if needed
         const openBraces = (jsonStr.match(/{/g) || []).length;
         const closeBraces = (jsonStr.match(/}/g) || []).length;
         if (openBraces > closeBraces) {
@@ -476,12 +552,10 @@ function repairIncompleteJson(rawResponse) {
         }
     }
 
-    // Repair common truncation in API examples
     jsonStr = jsonStr.replace(/"example":\s*"([^"]*)$/, (match, p1) => {
         return `"example": "${p1.replace(/[^\\]"/g, '')}"`;
     });
 
-    // Ensure final character is closing brace
     if (!jsonStr.endsWith('}') && jsonStr.startsWith('{')) {
         jsonStr += '}';
     }
@@ -489,7 +563,6 @@ function repairIncompleteJson(rawResponse) {
     return jsonStr;
 }
 
-// Gemini API Caller
 async function callGemini({ prompt, model }) {
     try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
@@ -513,7 +586,7 @@ async function callGemini({ prompt, model }) {
                 }
             },
             {
-                timeout: 120000, // 120s timeout
+                timeout: 120000,
                 headers: { 'Content-Type': 'application/json' }
             }
         );
@@ -525,48 +598,20 @@ async function callGemini({ prompt, model }) {
     }
 }
 
-// GitHub User Repositories API
-app.get('/api/user/repos', async (req, res) => {
-    try {
-        const token = req.headers.authorization?.split(' ')[1];
-        if (!token) {
-            return res.status(401).json({ error: 'Unauthorized' });
-        }
+// Error handling middleware
+app.use((error, req, res, next) => {
+    console.error('Unhandled error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+});
 
-        const response = await axios.get('https://api.github.com/user/repos', {
-            headers: {
-                Authorization: `token ${token}`,
-                Accept: 'application/vnd.github.v3+json'
-            },
-            params: {
-                sort: 'updated',
-                direction: 'desc',
-                per_page: 100
-            }
-        });
-
-        // Process repositories with essential info
-        const repos = response.data.map(repo => ({
-            id: repo.id,
-            name: repo.name,
-            owner: repo.owner.login,
-            full_name: repo.full_name,
-            description: repo.description,
-            language: repo.language,
-            stars: repo.stargazers_count,
-            forks: repo.forks_count,
-            updated_at: repo.updated_at,
-            html_url: repo.html_url,
-            default_branch: repo.default_branch
-        }));
-
-        res.json(repos);
-    } catch (error) {
-        console.error('Error fetching repositories:', error.response?.data || error.message);
-        res.status(500).json({ error: 'Failed to fetch repositories' });
-    }
+// 404 handler
+app.use((req, res) => {
+    res.status(404).json({ error: 'Endpoint not found' });
 });
 
 // Start server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`DocsGen backend running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`DocsGen backend running on port ${PORT}`);
+    console.log('CORS enabled for localhost:3000');
+});

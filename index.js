@@ -5,45 +5,8 @@ const cors = require('cors');
 
 const app = express();
 
-// CORS Middleware - Must be FIRST before any routes
-const corsOptions = {
-    origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps or curl requests)
-        if (!origin) return callback(null, true);
 
-        const allowedOrigins = [
-            'http://localhost:3000',
-            'http://localhost:3001',
-            'https://localhost:3000',
-            'https://localhost:3001',
-            // Add your production frontend URL when you deploy it
-            'https://your-frontend-app.vercel.app',
-            // Allow localhost to access deployed backend
-            ...(process.env.NODE_ENV === 'production' ? ['http://localhost:3000', 'http://localhost:3001'] : [])
-        ];
-
-        if (allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            console.log('CORS blocked origin:', origin); // Debug log
-            callback(new Error(`Not allowed by CORS. Origin: ${origin}`));
-        }
-    },
-    credentials: true,
-    optionsSuccessStatus: 200,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: [
-        'Origin',
-        'X-Requested-With',
-        'Content-Type',
-        'Accept',
-        'Authorization',
-        'Cache-Control',
-        'Pragma'
-    ]
-};
-
-app.use(cors(corsOptions));
+app.use(cors());
 
 // Update your manual CORS headers too
 app.use((req, res, next) => {

@@ -9,17 +9,6 @@
             }
         }
     ],
-    "functions": {
-        "index.js": {
-            "includeFiles": "**"
-        }
-    },
-    "routes": [
-        {
-            "src": "/api/(.*)",
-            "dest": "/index.js"
-        }
-    ],
     "env": {
         "NODE_ENV": "production"
     }

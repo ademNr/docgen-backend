@@ -425,8 +425,33 @@ ANALYZE THE CODE AND RETURN A JSON OBJECT WITH THIS EXACT STRUCTURE:
     "guidelines": "Code style guidelines",
     "process": "Pull request process"
   },
+  
   "license": "MIT",
-  "author": "Author name"
+  "author": "Author name",
+   "bestPractices": {
+      "score": 85, // Overall score (0-100)
+      "summary": "Brief summary of adherence to best practices",
+      "strengths": [
+        "List of strengths in following best practices"
+      ],
+      "improvements": [
+        {
+          "category": "Testing",
+          "suggestions": [
+            "Add unit tests for core modules",
+            "Implement integration testing"
+          ]
+        },
+        {
+          "category": "Security",
+          "suggestions": [
+            "Sanitize user inputs in API endpoints",
+            "Implement rate limiting"
+          ]
+        }
+      ]
+    }
+
 }
 
 CODE CONTEXT:

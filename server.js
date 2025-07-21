@@ -270,11 +270,35 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
     const results = [];
     let processedCount = 0;
 
+    // Define patterns for skipping directories and files
+    const SKIP_DIRS = new Set([
+        '.git', '.github', '.vscode', '.idea',
+        'node_modules', 'vendor', 'dist', 'build',
+        'out', 'bin', 'obj', '__pycache__', 'coverage'
+    ]);
+
+    const SKIP_FILE_PATTERNS = [
+        /\.min\.js$/, /\.min\.css$/,   // Minified files
+        /\.(png|jpg|jpeg|gif|bmp|ico|svg|mp4|mov|avi|wav|mp3|ogg)$/i,  // Media files
+        /\.(pdf|docx?|xlsx?|pptx?|zip|tar|gz|rar)$/i,  // Documents/archives
+        /package-lock\.json$/, /yarn\.lock$/,  // Lock files
+        /\.log$/, /\.cache$/, /\.map$/  // Logs and generated files
+    ];
+
     for (const item of contents) {
         try {
             const relativePath = getRelativePath(item.path, path);
+            const itemName = item.name.toLowerCase();
 
+            // Skip excluded directories
             if (item.type === 'dir') {
+                if (SKIP_DIRS.has(itemName)) {
+                    if (jobId) {
+                        emitProgress(jobId, null, `Skipped directory: ${relativePath}`);
+                    }
+                    continue;
+                }
+
                 if (jobId) {
                     emitProgress(jobId, null, `Scanning directory: ${relativePath}`);
                 }
@@ -294,7 +318,17 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
                     jobId
                 );
                 results.push(...nestedFiles);
-            } else if (item.type === 'file' && isCodeFile(item.name, includeTests)) {
+            }
+            // Process valid code files
+            else if (item.type === 'file' && isCodeFile(item.name, includeTests)) {
+                // Skip files matching exclusion patterns
+                if (SKIP_FILE_PATTERNS.some(pattern => pattern.test(item.path))) {
+                    if (jobId) {
+                        emitProgress(jobId, null, `Skipped file: ${relativePath}`);
+                    }
+                    continue;
+                }
+
                 if (jobId) {
                     emitProgress(jobId, null, `Analyzing file: ${relativePath}`);
                 }
@@ -305,6 +339,7 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
                     path: item.path
                 });
 
+                // Skip large files (over 1MB)
                 if (fileData.size > 1000000) {
                     if (jobId) {
                         emitProgress(jobId, null, `Skipped large file: ${relativePath}`);
@@ -314,12 +349,15 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
 
                 results.push({
                     path: item.path,
+                    relativePath: relativePath,  // Added for easier reference
                     content: Buffer.from(fileData.content, 'base64').toString('utf-8'),
-                    size: fileData.size
+                    size: fileData.size,
+                    sha: fileData.sha  // Added for version tracking
                 });
 
                 processedCount++;
 
+                // Batch progress updates
                 if (jobId && processedCount % 5 === 0) {
                     emitProgress(jobId, null, `Processed ${processedCount} files...`);
                 }

@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
+const mongoose = require('mongoose');
+const User = require('./models/User');
 
 const EventEmitter = require('events');
 const crypto = require('crypto');
@@ -10,7 +12,12 @@ const app = express();
 
 app.use(cors({ origin: "*" }));
 
-
+mongoose.connect(process.env.MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+})
+    .then(() => console.log('MongoDB connected'))
+    .catch(err => console.error('MongoDB connection error:', err));
 
 // Body parser middleware
 app.use(express.json({ limit: '50mb' }));
@@ -127,14 +134,43 @@ app.post('/api/auth/github', async (req, res) => {
             }
         );
 
-        console.log('GitHub response:', response.data);
-
         if (!response.data.access_token) {
             console.error('No access token in response:', response.data);
             return res.status(401).json({ error: 'GitHub authentication failed' });
         }
 
-        res.json({ token: response.data.access_token });
+        // Get GitHub user info
+        const userResponse = await axios.get('https://api.github.com/user', {
+            headers: { Authorization: `token ${response.data.access_token}` }
+        });
+
+        const githubUser = userResponse.data;
+
+        // Find or create user using githubId (which is the numeric ID from GitHub)
+        let user = await User.findOne({ githubId: githubUser.id });
+
+        if (!user) {
+            user = new User({
+                githubId: githubUser.id,
+                login: githubUser.login, // store the username as well
+                accessToken: response.data.access_token,
+                credits: 200
+            });
+        } else {
+            user.accessToken = response.data.access_token;
+            user.lastLogin = new Date();
+        }
+
+        await user.save().catch(err => {
+            console.error('Error saving user:', err);
+            throw new Error('Failed to save user');
+        });
+
+        res.json({
+            token: response.data.access_token,
+            credits: user.credits,
+            userId: githubUser.id // return the numeric GitHub ID
+        });
     } catch (error) {
         console.error('GitHub auth error:', error.response?.data || error.message);
         res.status(500).json({
@@ -143,13 +179,47 @@ app.post('/api/auth/github', async (req, res) => {
         });
     }
 });
-
 // Generate docs endpoint
+// Generate docs endpoint - Updated to use GitHub user ID for credit check
 app.post('/api/generate-docs', async (req, res) => {
-    const { token, owner, repo, includeTests = false } = req.body;
-    const jobId = createJobId(owner, repo, token);
+    const { userId, owner, repo, includeTests = false } = req.body;
+    const authHeader = req.headers.authorization;
+    const cost = 100;
 
+    // Verify authorization header
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized - Bearer token required' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const jobId = createJobId(owner, repo, token);
+    console.log(userId);
     try {
+        // First find the user by ID and verify the token matches
+        const user = await User.findOne({
+            githubId: userId,
+
+        });
+
+        if (!user) {
+            emitProgress(jobId, -1, 'User not found or token mismatch');
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        // Check credits
+        if (user.credits < cost) {
+            emitProgress(jobId, -1, `Insufficient credits. Need ${cost}, have ${user.credits}`);
+            return res.status(402).json({
+                error: 'Insufficient credits',
+                required: cost,
+                available: user.credits
+            });
+        }
+
+        // Deduct credits immediately to prevent duplicate requests
+        user.credits -= cost;
+        await user.save();
+
         emitProgress(jobId, 5, 'Initializing documentation generation...');
 
         const Octokit = await getOctokit();
@@ -194,11 +264,30 @@ app.post('/api/generate-docs', async (req, res) => {
         );
 
         emitProgress(jobId, 90, 'Documentation generated successfully!');
-        res.json({ documentation });
+
+        // Return both documentation and updated credits
+        res.json({
+            documentation,
+            credits: user.credits
+        });
+
         emitProgress(jobId, 100, 'Documentation ready');
     } catch (error) {
         console.error('Documentation generation error:', error);
         emitProgress(jobId, -1, `Error: ${error.message}`);
+
+        // If we failed after deducting credits, refund them
+        if (error.isCreditDeductionError) {
+            try {
+                const user = await User.findOne({ githubId: userId });
+                if (user) {
+                    user.credits += cost;
+                    await user.save();
+                }
+            } catch (refundError) {
+                console.error('Failed to refund credits:', refundError);
+            }
+        }
 
         let status = 500;
         let message = 'Documentation generation failed';
@@ -214,10 +303,66 @@ app.post('/api/generate-docs', async (req, res) => {
             message = 'Invalid access token';
         }
 
-        res.status(status).json({ error: message });
+        res.status(status).json({
+            error: message,
+            details: error.message
+        });
     }
 });
+app.post('/api/admin/add-credits', async (req, res) => {
+    const { adminKey, githubId, amount } = req.body;
 
+    if (adminKey !== process.env.ADMIN_KEY) {
+        return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    try {
+        const user = await User.findOne({ githubId });
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        user.credits += parseInt(amount);
+        await user.save();
+
+        res.json({
+            githubId,
+            newCredits: user.credits
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+// get user credits
+app.post('/api/user/credits', async (req, res) => {
+    const { userId } = req.body;
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const token = authHeader.split(' ')[1];
+
+    try {
+        // First verify the token matches the user
+        const user = await User.findOne({
+            githubId: userId,
+
+        });
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found or token mismatch' });
+        }
+
+        res.json({
+            credits: user.credits,
+            lastLogin: user.lastLogin
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error' });
+    }
+});
 // User repositories endpoint
 app.get('/api/user/repos', async (req, res) => {
     try {

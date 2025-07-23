@@ -216,9 +216,7 @@ app.post('/api/generate-docs', async (req, res) => {
             });
         }
 
-        // Deduct credits immediately to prevent duplicate requests
-        user.credits -= cost;
-        await user.save();
+
 
         emitProgress(jobId, 5, 'Initializing documentation generation...');
 
@@ -270,7 +268,9 @@ app.post('/api/generate-docs', async (req, res) => {
             documentation,
             credits: user.credits
         });
-
+        // Deduct credits immediately to prevent duplicate requests
+        user.credits -= cost;
+        await user.save();
         emitProgress(jobId, 100, 'Documentation ready');
     } catch (error) {
         console.error('Documentation generation error:', error);
@@ -646,6 +646,7 @@ ${files.slice(0, 20).map(file => {
         }).join('\n')}
 
 IMPORTANT: Return ONLY a complete, valid JSON object. No markdown, no explanations.
+IMPORTANT: For best practices Keep the response phrases as short as possible.
         `;
 
         const response = await callGemini({

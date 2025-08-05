@@ -859,7 +859,7 @@ app.post('/api/webhook/gumroad', express.urlencoded({ extended: true }), async (
                 await new User({
                     email: event.email,
                     lifeTimePlan: true,
-                    credits: 10000,
+
                     // Placeholder fields
                     githubId: `gumroad-${event.sale_id}`,
                     login: `gumroad-user-${event.sale_id}`,

@@ -22,7 +22,7 @@ const userSchema = new mongoose.Schema({
     },
     credits: {
         type: Number,
-        default: 200
+        default: 100
     },
     createdAt: {
         type: Date,

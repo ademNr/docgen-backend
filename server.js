@@ -804,20 +804,7 @@ app.post('/api/user/update-email', async (req, res) => {
 });
 // Add this endpoint after your existing routes
 app.post('/api/webhook/gumroad', express.raw({ type: 'application/json' }), async (req, res) => {
-    const GUMROAD_WEBHOOK_SECRET = process.env.GUMROAD_WEBHOOK_SECRET;
 
-    // Verify signature if secret is set
-    if (GUMROAD_WEBHOOK_SECRET) {
-        const signature = req.headers['x-gumroad-webhook-signature'];
-        const hmac = crypto.createHmac('sha256', GUMROAD_WEBHOOK_SECRET);
-        hmac.update(req.body);
-        const digest = hmac.digest('hex');
-
-        if (signature !== digest) {
-            console.warn('Invalid Gumroad signature');
-            return res.status(401).json({ error: 'Invalid signature' });
-        }
-    }
 
     try {
         const event = JSON.parse(req.body.toString());

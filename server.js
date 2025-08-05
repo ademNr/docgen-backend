@@ -804,29 +804,7 @@ app.post('/api/user/update-email', async (req, res) => {
 });
 // Add this endpoint after your existing routes
 app.post('/api/webhook/gumroad', express.urlencoded({ extended: true }), async (req, res) => {
-    const GUMROAD_WEBHOOK_SECRET = process.env.GUMROAD_WEBHOOK_SECRET;
 
-    // Verify signature if secret is set
-    if (GUMROAD_WEBHOOK_SECRET) {
-        const signature = req.headers['x-gumroad-webhook-signature'];
-        const payload = Object.entries(req.body)
-            .map(([key, val]) => `${key}=${val}`)
-            .sort()
-            .join('');
-
-        const hmac = crypto.createHmac('sha256', GUMROAD_WEBHOOK_SECRET);
-        hmac.update(payload);
-        const digest = hmac.digest('hex');
-
-        if (signature !== digest) {
-            console.warn('Invalid Gumroad signature', {
-                received: signature,
-                computed: digest,
-                payload
-            });
-            return res.status(401).json({ error: 'Invalid signature' });
-        }
-    }
 
     try {
         const event = req.body;
@@ -847,29 +825,13 @@ app.post('/api/webhook/gumroad', express.urlencoded({ extended: true }), async (
                 {
                     $set: {
                         lifeTimePlan: true,
-                        credits: 10000  // Give generous credits with lifetime plan
+
                     }
                 },
                 { new: true }
             );
 
-            if (!user) {
-                console.warn(`User not found for email: ${event.email}`);
-                // Instead of failing, create a record for future matching
-                await new User({
-                    email: event.email,
-                    lifeTimePlan: true,
 
-                    // Placeholder fields
-                    githubId: `gumroad-${event.sale_id}`,
-                    login: `gumroad-user-${event.sale_id}`,
-                    accessToken: 'pending-gumroad-verification'
-                }).save();
-                return res.json({
-                    success: true,
-                    message: 'User created with lifetime access. GitHub login pending.'
-                });
-            }
 
             console.log(`Updated user ${user.githubId} with lifetime access`);
             return res.json({ success: true, message: 'Lifetime access granted' });

@@ -8,6 +8,12 @@ const userSchema = new mongoose.Schema({
         required: true,
         unique: true
     },
+    lifeTimePlan: {
+        type: Boolean,
+        default: false
+    },
+    login: { type: String, required: true }, // GitHub username
+    email: { type: String, default: "" }, // GitHub email
     accessToken: {
         type: String,
         required: true,

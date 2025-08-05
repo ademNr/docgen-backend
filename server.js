@@ -139,12 +139,20 @@ app.post('/api/auth/github', async (req, res) => {
             return res.status(401).json({ error: 'GitHub authentication failed' });
         }
 
+
         // Get GitHub user info
         const userResponse = await axios.get('https://api.github.com/user', {
             headers: { Authorization: `token ${response.data.access_token}` }
         });
 
+
+        console.log(userResponse);
+
+
         const githubUser = userResponse.data;
+
+
+        console.log(githubUser);
 
         // Find or create user using githubId (which is the numeric ID from GitHub)
         let user = await User.findOne({ githubId: githubUser.id });
@@ -153,6 +161,7 @@ app.post('/api/auth/github', async (req, res) => {
             user = new User({
                 githubId: githubUser.id,
                 login: githubUser.login, // store the username as well
+
                 accessToken: response.data.access_token,
                 credits: 200
             });
@@ -180,11 +189,11 @@ app.post('/api/auth/github', async (req, res) => {
     }
 });
 // Generate docs endpoint
-// Generate docs endpoint - Updated to use GitHub user ID for credit check
+// Generate docs endpoint with lifetime plan support
 app.post('/api/generate-docs', async (req, res) => {
     const { userId, owner, repo, includeTests = false } = req.body;
     const authHeader = req.headers.authorization;
-    const cost = 100;
+    const defaultCost = 100;
 
     // Verify authorization header
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -193,12 +202,11 @@ app.post('/api/generate-docs', async (req, res) => {
 
     const token = authHeader.split(' ')[1];
     const jobId = createJobId(owner, repo, token);
-    console.log(userId);
+
     try {
         // First find the user by ID and verify the token matches
         const user = await User.findOne({
             githubId: userId,
-
         });
 
         if (!user) {
@@ -206,17 +214,20 @@ app.post('/api/generate-docs', async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
-        // Check credits
-        if (user.credits < cost) {
+        // Check if user has lifetime plan
+        const hasLifetimePlan = user.lifeTimePlan;
+        const cost = hasLifetimePlan ? 0 : defaultCost;
+
+        // Skip credit check for lifetime users
+        if (!hasLifetimePlan && user.credits < cost) {
             emitProgress(jobId, -1, `Insufficient credits. Need ${cost}, have ${user.credits}`);
             return res.status(402).json({
                 error: 'Insufficient credits',
                 required: cost,
-                available: user.credits
+                available: user.credits,
+                lifeTimePlan: user.lifeTimePlan
             });
         }
-
-
 
         emitProgress(jobId, 5, 'Initializing documentation generation...');
 
@@ -263,25 +274,30 @@ app.post('/api/generate-docs', async (req, res) => {
 
         emitProgress(jobId, 90, 'Documentation generated successfully!');
 
-        // Return both documentation and updated credits
+        // Only deduct credits for non-lifetime users
+        if (!hasLifetimePlan) {
+            user.credits -= cost;
+            await user.save();
+        }
+
+        // Return documentation with updated user info
         res.json({
             documentation,
-            credits: user.credits
+            credits: user.credits,
+            lifeTimePlan: user.lifeTimePlan
         });
-        // Deduct credits immediately to prevent duplicate requests
-        user.credits -= cost;
-        await user.save();
+
         emitProgress(jobId, 100, 'Documentation ready');
     } catch (error) {
         console.error('Documentation generation error:', error);
         emitProgress(jobId, -1, `Error: ${error.message}`);
 
         // If we failed after deducting credits, refund them
-        if (error.isCreditDeductionError) {
+        if (error.isCreditDeductionError && !user.lifeTimePlan) {
             try {
                 const user = await User.findOne({ githubId: userId });
                 if (user) {
-                    user.credits += cost;
+                    user.credits += defaultCost;
                     await user.save();
                 }
             } catch (refundError) {
@@ -305,7 +321,8 @@ app.post('/api/generate-docs', async (req, res) => {
 
         res.status(status).json({
             error: message,
-            details: error.message
+            details: error.message,
+            lifeTimePlan: user?.lifeTimePlan || false
         });
     }
 });
@@ -746,6 +763,103 @@ async function callGemini({ prompt, model }) {
         throw err;
     }
 }
+
+// Add this endpoint after your existing endpoints
+app.post('/api/user/update-email', async (req, res) => {
+    const { userId, email } = req.body;
+
+    // Validate inputs
+    if (!userId || !email) {
+        return res.status(400).json({ error: 'Missing userId or email' });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: 'Invalid email format' });
+    }
+
+    try {
+        // Find and update user by GitHub ID only
+        const user = await User.findOneAndUpdate(
+            { githubId: userId },
+            { email: email },
+            { new: true } // Return updated document
+        );
+
+        if (!user) {
+            return res.status(404).json({
+                error: 'User not found'
+            });
+        }
+
+        res.json({
+            message: 'Email updated successfully',
+            email: user.email
+        });
+    } catch (error) {
+        console.error('Email update error:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+// Add this endpoint after your existing routes
+app.post('/api/webhook/gumroad', express.raw({ type: 'application/json' }), async (req, res) => {
+    const GUMROAD_WEBHOOK_SECRET = process.env.GUMROAD_WEBHOOK_SECRET;
+
+    // Verify signature if secret is set
+    if (GUMROAD_WEBHOOK_SECRET) {
+        const signature = req.headers['x-gumroad-webhook-signature'];
+        const hmac = crypto.createHmac('sha256', GUMROAD_WEBHOOK_SECRET);
+        hmac.update(req.body);
+        const digest = hmac.digest('hex');
+
+        if (signature !== digest) {
+            console.warn('Invalid Gumroad signature');
+            return res.status(401).json({ error: 'Invalid signature' });
+        }
+    }
+
+    try {
+        const event = JSON.parse(req.body.toString());
+
+        // Validate required fields
+        if (!event || !event.product_name || !event.email || !event.sale_id) {
+            return res.status(400).json({ error: 'Invalid payload' });
+        }
+
+        // Check for lifetime subscription product
+        if (event.product_name === "🚀 Lifetime Gitforje Subscription") {
+            console.log(`Processing lifetime subscription for: ${event.email}`);
+
+            // Find user by email and update
+            const user = await User.findOneAndUpdate(
+                { email: event.email },
+                {
+                    $set: {
+                        lifeTimePlan: true,
+
+
+                    }
+                },
+                { new: true }
+            );
+
+            if (!user) {
+                console.warn(`User not found for email: ${event.email}`);
+                return res.status(404).json({ error: 'User not found' });
+            }
+
+            console.log(`Updated user ${user.githubId} with lifetime access`);
+            return res.json({ success: true, message: 'Lifetime access granted' });
+        }
+
+        // Not a lifetime subscription - ignore
+        res.status(200).json({ success: true, message: 'Event received but not processed' });
+    } catch (error) {
+        console.error('Gumroad webhook error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
 app.get('/api/test', (req, res) => {
     res.json({ message: 'CORS test successful!' });
 });

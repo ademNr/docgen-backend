@@ -807,8 +807,6 @@ app.post('/api/user/update-email', async (req, res) => {
 });
 // Add this endpoint after your existing routes
 app.post('/api/webhook/gumroad', express.urlencoded({ extended: true }), async (req, res) => {
-
-
     try {
         const event = req.body;
 
@@ -818,29 +816,64 @@ app.post('/api/webhook/gumroad', express.urlencoded({ extended: true }), async (
             return res.status(400).json({ error: 'Invalid payload' });
         }
 
-        // Check for lifetime subscription product
-        if (event.product_name === "🚀 Lifetime Gitforje Subscription") {
+        // Normalize product name for case-insensitive matching
+        const productName = event.product_name.trim().toLowerCase();
+
+        // Handle lifetime subscription
+        if (productName === "🚀 lifetime gitforje subscription") {
             console.log(`Processing lifetime subscription for: ${event.email}`);
 
-            // Find user by email and update
             const user = await User.findOneAndUpdate(
                 { email: event.email },
-                {
-                    $set: {
-                        lifeTimePlan: true,
-
-                    }
-                },
+                { $set: { lifeTimePlan: true } },
                 { new: true }
             );
 
-
+            if (!user) {
+                console.warn(`User not found: ${event.email}`);
+                return res.status(404).json({ error: 'User not found' });
+            }
 
             console.log(`Updated user ${user.githubId} with lifetime access`);
             return res.json({ success: true, message: 'Lifetime access granted' });
         }
 
-        // Not a lifetime subscription - ignore
+        // Handle credit purchases
+        let creditsToAdd = 0;
+
+        // Check for specific credit products
+        if (productName === "10 credits") {
+            creditsToAdd = 10;
+        } else if (productName === "25 credits") {
+            creditsToAdd = 25;
+        } else if (productName === "50 credits") {
+            creditsToAdd = 50;
+        }
+
+        // Process valid credit products
+        if (creditsToAdd > 0) {
+            const quantity = event.quantity ? parseInt(event.quantity) : 1;
+            const totalCredits = creditsToAdd * quantity;
+
+            console.log(`Adding ${totalCredits} credits to: ${event.email}`);
+
+            const user = await User.findOneAndUpdate(
+                { email: event.email },
+                { $inc: { credits: totalCredits } },
+                { new: true }
+            );
+
+            if (!user) {
+                console.warn(`User not found: ${event.email}`);
+                return res.status(404).json({ error: 'User not found' });
+            }
+
+            console.log(`Added ${totalCredits} credits to ${user.githubId}. New balance: ${user.credits}`);
+            return res.json({ success: true, message: `Added ${totalCredits} credits` });
+        }
+
+        // Unrecognized product type
+        console.log(`Unprocessed product: ${event.product_name} for ${event.email}`);
         res.status(200).json({ success: true, message: 'Event received but not processed' });
     } catch (error) {
         console.error('Gumroad webhook error:', error);

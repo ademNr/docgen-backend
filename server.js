@@ -146,7 +146,7 @@ app.post('/api/auth/github', async (req, res) => {
         });
 
 
-        console.log(userResponse);
+
 
 
         const githubUser = userResponse.data;
@@ -163,7 +163,7 @@ app.post('/api/auth/github', async (req, res) => {
                 login: githubUser.login, // store the username as well
 
                 accessToken: response.data.access_token,
-                credits: 200
+                credits: 1
             });
         } else {
             user.accessToken = response.data.access_token;
@@ -178,7 +178,8 @@ app.post('/api/auth/github', async (req, res) => {
         res.json({
             token: response.data.access_token,
             credits: user.credits,
-            userId: githubUser.id // return the numeric GitHub ID
+            userId: githubUser.id,
+            isSubscribed: user.lifeTimePlan
         });
     } catch (error) {
         console.error('GitHub auth error:', error.response?.data || error.message);
@@ -193,7 +194,7 @@ app.post('/api/auth/github', async (req, res) => {
 app.post('/api/generate-docs', async (req, res) => {
     const { userId, owner, repo, includeTests = false } = req.body;
     const authHeader = req.headers.authorization;
-    const defaultCost = 100;
+    const defaultCost = 1;
 
     // Verify authorization header
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -374,7 +375,8 @@ app.post('/api/user/credits', async (req, res) => {
 
         res.json({
             credits: user.credits,
-            lastLogin: user.lastLogin
+            lastLogin: user.lastLogin,
+            isSubscribed: user.lifeTimePlan
         });
     } catch (error) {
         res.status(500).json({ error: 'Server error' });

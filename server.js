@@ -842,12 +842,12 @@ app.post('/api/webhook/gumroad', express.urlencoded({ extended: true }), async (
         let creditsToAdd = 0;
 
         // Check for specific credit products
-        if (productName === "10 credits") {
-            creditsToAdd = 10;
-        } else if (productName === "25 credits") {
-            creditsToAdd = 25;
-        } else if (productName === "50 credits") {
-            creditsToAdd = 50;
+        if (productName === "5 credits") {
+            creditsToAdd = 5;
+        } else if (productName === "15 credits") {
+            creditsToAdd = 15;
+        } else if (productName === "30 credits") {
+            creditsToAdd = 30;
         }
 
         // Process valid credit products

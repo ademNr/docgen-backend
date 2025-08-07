@@ -12,13 +12,7 @@ const app = express();
 
 app.use(cors({ origin: "*" }));
 
-mongoose.connect(process.env.MONGODB_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
 
-})
-    .then(() => console.log('MongoDB connected'))
-    .catch(err => console.error('MongoDB connection error:', err));
 
 // Body parser middleware
 app.use(express.json({ limit: '100mb' }));
@@ -42,27 +36,97 @@ const apiLimiter = rateLimit({
 app.use('/api/', apiLimiter);
 
 
+// Add periodic cleanup
+setInterval(() => {
+    const now = Date.now();
+    for (const jobId in progressChannels) {
+        const emitter = progressChannels[jobId];
 
+        // Remove emitters without listeners for 5+ minutes
+        if (emitter.listenerCount('progress') === 0) {
+            const lastActive = emitter.lastActive || now;
+            if (now - lastActive > 5 * 60 * 1000) {
+                delete progressChannels[jobId];
+            }
+        } else {
+            emitter.lastActive = now;
+        }
+    }
+}, 60 * 1000); // Run every minute
+
+let cachedDb = null;
+
+async function connectToDatabase() {
+    if (cachedDb && cachedDb.readyState === 1) {
+        return cachedDb;
+    }
+
+    const options = {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+        maxPoolSize: 5,
+        serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 30000,
+    };
+
+    try {
+        cachedDb = await mongoose.connect(process.env.MONGODB_URI, options);
+        console.log('MongoDB connected');
+        return cachedDb;
+    } catch (err) {
+        console.error('MongoDB connection error:', err);
+        throw err;
+    }
+}
+
+// Add this middleware before your routes
+app.use(async (req, res, next) => {
+    try {
+        await connectToDatabase();
+        next();
+    } catch (err) {
+        res.status(500).json({ error: 'Database connection failed' });
+    }
+});
 const progressChannels = {};
 
 function createJobId(owner, repo, token) {
     return crypto.createHash('sha256').update(`${owner}${repo}${token}`).digest('hex');
 }
 
+// Add automatic cleanup to progressChannels
 function getProgressEmitter(jobId) {
     if (!progressChannels[jobId]) {
-        progressChannels[jobId] = new EventEmitter();
+        const emitter = new EventEmitter();
+
+        // Auto-cleanup after 1 hour
+        const timeout = setTimeout(() => {
+            emitter.removeAllListeners();
+            delete progressChannels[jobId];
+        }, 60 * 60 * 1000); // 1 hour
+
+        // Clear timeout when job completes
+        emitter.once('complete', () => {
+            clearTimeout(timeout);
+            delete progressChannels[jobId];
+        });
+
+        progressChannels[jobId] = emitter;
     }
     return progressChannels[jobId];
 }
 
+// Modify emitProgress to send completion event
 function emitProgress(jobId, progress, message, currentFile = null) {
     const emitter = getProgressEmitter(jobId);
-    emitter.emit('progress', {
-        progress,
-        message,
-        currentFile
-    });
+    const data = { progress, message, currentFile };
+
+    emitter.emit('progress', data);
+
+    // Mark completion at 100%
+    if (progress === 100) {
+        emitter.emit('complete');
+    }
 }
 
 function removeProgressEmitter(jobId) {
@@ -111,7 +175,7 @@ app.get('/api/generate-progress', (req, res) => {
 // GitHub OAuth endpoint - FIXED
 app.post('/api/auth/github', async (req, res) => {
     try {
-        console.log('GitHub auth request received:', req.body);
+        // console.log('GitHub auth request received:', req.body);
 
         const { code } = req.body;
 
@@ -153,7 +217,7 @@ app.post('/api/auth/github', async (req, res) => {
         const githubUser = userResponse.data;
 
 
-        console.log(githubUser);
+        //console.log(githubUser);
 
         // Find or create user using githubId (which is the numeric ID from GitHub)
         let user = await User.findOne({ githubId: githubUser.id });
@@ -432,6 +496,10 @@ function getRelativePath(fullPath, basePath) {
 }
 
 async function processRepositoryContents(octokit, owner, repo, contents, includeTests, path = '', jobId = null) {
+    const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB
+    const MAX_FILES = 50;
+    let totalSize = 0;
+    let fileCount = 0;
     const results = [];
     let processedCount = 0;
 
@@ -486,6 +554,15 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
             }
             // Process valid code files
             else if (item.type === 'file' && isCodeFile(item.name, includeTests)) {
+                if (fileData.size > 500 * 1024) { // 500KB max per file
+                    if (jobId) emitProgress(jobId, null, `Skipped large file: ${relativePath}`);
+                    continue;
+                }
+
+                if (totalSize + fileData.size > MAX_TOTAL_SIZE || fileCount >= MAX_FILES) {
+                    if (jobId) emitProgress(jobId, null, `Stopping early due to size limits`);
+                    break;
+                }
                 // Skip files matching exclusion patterns
                 if (SKIP_FILE_PATTERNS.some(pattern => pattern.test(item.path))) {
                     if (jobId) {
@@ -526,6 +603,8 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
                 if (jobId && processedCount % 5 === 0) {
                     emitProgress(jobId, null, `Processed ${processedCount} files...`);
                 }
+                totalSize += fileData.size;
+                fileCount++;
             }
         } catch (error) {
             console.warn(`Error processing ${item.path}:`, error.message);
@@ -533,6 +612,7 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
                 emitProgress(jobId, null, `Error processing: ${getRelativePath(item.path, path)}`);
             }
         }
+
     }
 
     return results;

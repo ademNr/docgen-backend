@@ -3,33 +3,21 @@
     "builds": [
         {
             "src": "server.js",
-            "use": "@vercel/node",
-            "config": {
-                "maxLambdaSize": "50mb",
-                "includeFiles": [
-                    "node_modules/@sparticuz/chromium/**"
-                ]
-            }
+            "use": "@vercel/node"
         }
     ],
     "routes": [
         {
-            "src": "/api/(.*)",
-            "dest": "server.js",
-            "methods": [
-                "GET",
-                "POST",
-                "OPTIONS"
-            ],
-            "headers": {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Authorization, Content-Type"
-            }
+            "src": "/(.*)",
+            "dest": "server.js"
         }
     ],
     "env": {
-        "NODE_ENV": "production",
-        "CHROMIUM_EXECUTABLE_PATH": "/var/task/node_modules/@sparticuz/chromium/bin/chromium"
+        "NODE_ENV": "production"
+    },
+    "functions": {
+        "server.js": {
+            "maxDuration": 30
+        }
     }
 }

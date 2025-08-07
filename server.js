@@ -554,7 +554,7 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
             }
             // Process valid code files
             else if (item.type === 'file' && isCodeFile(item.name, includeTests)) {
-                if (fileData.size > 500 * 1024) { // 500KB max per file
+                if (fileData.size > 1024 * 1024) { // 1MB max per file
                     if (jobId) emitProgress(jobId, null, `Skipped large file: ${relativePath}`);
                     continue;
                 }

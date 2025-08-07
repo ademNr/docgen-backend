@@ -581,13 +581,13 @@ async function processRepositoryContents(octokit, owner, repo, contents, include
                     path: item.path
                 });
 
-                // Skip large files (over 1MB)
-                if (fileData.size > 1000000) {
-                    if (jobId) {
-                        emitProgress(jobId, null, `Skipped large file: ${relativePath}`);
-                    }
-                    continue;
-                }
+                // // Skip large files (over 1MB)
+                // if (fileData.size > 1000000) {
+                //     if (jobId) {
+                //         emitProgress(jobId, null, `Skipped large file: ${relativePath}`);
+                //     }
+                //     continue;
+                // }
 
                 results.push({
                     path: item.path,

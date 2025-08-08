@@ -11,7 +11,7 @@ const setupMiddleware = (app) => {
         origin: process.env.NODE_ENV === 'production'
             ? [
                 'https://gitforje.vercel.app',
-                'https://gitforje.com'
+                'https://www.gitforje.com'
             ]
             : ['http://localhost:3000', 'http://localhost:3001'],
         credentials: true,

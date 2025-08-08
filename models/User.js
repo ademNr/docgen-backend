@@ -24,7 +24,8 @@ const userSchema = new mongoose.Schema({
                 return !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
             },
             message: 'Invalid email format'
-        }
+        },
+        default: ""
     },
     accessToken: {
         type: String,
